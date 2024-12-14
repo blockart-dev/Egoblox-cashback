@@ -1,0 +1,73 @@
+// src/database/schemas/user.schema.ts
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class User extends Document {
+  @Prop({ required: true })
+  username: string;
+
+  @Prop({ required: true })
+  chatId: string;
+
+  @Prop({ default: 0 })
+  loyaltyPoints: number; // For loyalty rewards
+
+  @Prop({ default: 0 })
+  cashbackBalance: number; // For cashback
+}
+
+export const UserSchema = SchemaFactory.createForClass(User);
+
+// src/bills/bills.service.ts
+import { Injectable } from '@nestjs/common';
+import { UserService } from '../database/user.service';
+
+@Injectable()
+export class BillsService {
+  constructor(private readonly userService: UserService) {}
+
+  async processTransaction(userId: string, amount: number): Promise<void> {
+    // Calculate cashback (10%)
+    const cashback = amount * 0.1;
+
+    // Update user loyalty points and cashback balance
+    const user = await this.userService.findById(userId);
+    if (user) {
+      user.cashbackBalance += cashback;
+      user.loyaltyPoints += Math.floor(amount / 10); // Example: 1 point per $10 spent
+      await this.userService.updateUser(user);
+    }
+  }
+}
+
+// src/bot/markups/rewards.ts
+import { Markup } from 'telegraf';
+
+export const rewardsMenu = (points: number, cashback: number) =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback(`Loyalty Points: ${points}`, 'loyalty_points')],
+    [Markup.button.callback(`Cashback Balance: $${cashback.toFixed(2)}`, 'cashback_balance')],
+  ]);
+
+// src/bot/bot.service.ts
+import { Injectable } from '@nestjs/common';
+import { Telegraf } from 'telegraf';
+import { UserService } from '../database/user.service';
+import { rewardsMenu } from './markups/rewards';
+
+@Injectable()
+export class BotService {
+  constructor(private readonly bot: Telegraf, private readonly userService: UserService) {}
+
+  setupBot(): void {
+    this.bot.command('rewards', async (ctx) => {
+      const user = await this.userService.findByChatId(ctx.chat.id);
+      if (user) {
+        await ctx.reply('Here are your rewards:', rewardsMenu(user.loyaltyPoints, user.cashbackBalance));
+      } else {
+        await ctx.reply('User not found. Please register first.');
+      }
+    });
+  }
+}
